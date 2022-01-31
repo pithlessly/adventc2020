@@ -6,8 +6,8 @@ import Language.Reflection
 %language ElabReflection
 
 -- taken from Data.List in Idris1 (not present in Idris2)
-parameters (f : b -> c)
-           (g : a -> b)
+parameters (f : b -> c,
+            g : a -> b)
   ||| Prove that mapping two functions is the same as mapping their composition.
   mapFusion : (l : List a) -> map f (map g l) = map (f . g) l
   mapFusion [] = Refl
