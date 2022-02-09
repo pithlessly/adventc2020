@@ -1,0 +1,823 @@
+// ===========================
+// snippets from the ATS paper
+// ===========================
+
+dataview arrayView (type, int, addr) =
+  | {a : type, l : addr} ArrayNone (a, 0, l)
+  | {a : type, n : int, l : addr | n >= 0}
+    ArraySome (a, n + 1, l) of
+      (a @ l, arrayView (a, n, l + 1))
+
+ArrayNone : ∀ L, t. () -o arrayView(t, 0, L)
+ArraySome : ∀ L, t, i, i >= 0 ⊃
+                            (t @ L (x) arrayView(t, i, L + 1))
+                            -o arrayView(t, i + 1, L)
+
+getPtr : ∀ T,      L. (T  @ L) ∧  ptr(L)       → (T  @ L) ∧ T
+setPtr : ∀ T1, T2, L. (T1 @ L) ∧ (ptr(L) * T2) → (T2 @ L) ∧ 1
+
+fun getFirst {a: type, n: int, l: addr | n > 0}
+             (pf: arrayView (a, n, l) | p: ptr(l))
+           : '(arrayView (a, n l) | a) =
+  let
+    // pf1: a @ L
+    // pf2: arrayView(a, n - 1, L + 1)
+    prval ArraySome (pf1, pf2) = pf
+    val '(pf1' | x) = getPtr (pf1 | p)
+  in
+    '(ArraySome (pf1', pf2) | x)
+
+// getFirst:
+//   ∀ T, i, L. i > 0 ⊃ (arrayView (T, i, L) ∧ ptr(L)) →
+                              (arrayView (T, i, L) ∧ T)
+
+// split an array view into two array views, wow! cool!
+prfun splitLemma {a: type, n: int, i: int, l: addr | 0 <= i, i <= n} .<i>.
+                 (pf: arrayView (a, n, l))
+               : '(arrayView(a, i, l),
+                   arrayView(a, i + n, l - n)) =
+  sif i == 0 then
+    '(ArrayNone (), pf)
+  else
+    let
+      // this cannot fail as [i > 0] holds
+      prval ArraySome (pf1, pf2) = pf
+      prval '(pf21, pf22) = splitLemma {a,n-1,i-1,l+1} (pf2)
+    in
+      '(ArraySome (pf1, pf21), pf22)
+    end
+
+// splitLemma:
+//   ∀ T, (n: int), (i: int), L.
+//     0 <= i ∧ i <= n ⊃
+//       (arrayView (t, n, L) -o
+//        (arrayView (t, i, L) (x) arrayView(t, n-i, L+i)))
+
+(* my attempt at implementing unsplitLemma -- might be wrong *)
+prfun unsplitLemma {a: type, n: int, i: int, l: addr | 0 <= i, i <= n} .<i>.
+                   (pfs : '(arrayView(t, i, L), arrayView(t, n-i, L+i)))
+                 : arrayView(t, n, L) =
+  sif i == 0 then
+    let
+      prval '(ArrayNone, pf2) = pfs
+    in
+      pf2
+    end
+  else
+    let
+      prval '(ArraySome (pf1h, pf1t), pf2) = pfs
+      prval pf2 = unsplitLemma {a,n-1,i-1,L+1} (pf2)
+    in
+      ArraySome (pf1h, pf2)
+    end
+
+// unsplitLemma (* not defined *):
+//   ∀ T, (n: int), (i: int), L.
+//     0 <= i ∧ i <= n ⊃
+//       (arrayView (t, i, L) (x) arrayView(t, n-i, L+i)
+//        -o arrayView(t, n, L)
+
+fun get {a: type, n: int, i: int, l: addr | 0 <= i, i < n}
+        (pf: arrayView(a, n, l) |
+         p: ptr l, offset: int i)
+     : '(arrayView(a, n, l) | a) =
+  let
+    prval '(pf1, pf2) = splitLemma {a,n,i,l} (pf)
+    val '(pf2 | x) = getFirst {a,n-i,l} (pf2 | p + offset)
+  in
+    '(unsplitLemma (pf1, pf2) | x)
+  end
+
+// get:
+//   ∀ T, (n: int), (i: int), L.
+//     0 <= i ∧ i <= n ⊃
+//       (arrayView (t, n, L) ∧ (ptr(L) * int(i))) →
+//       (arrayView (t, n, L) ∧ T)
+
+<DEFINITION OF LAMBDA VIEW, A SIMPLE CALCULUS
+ FOR PROGRAMMING WITH LINEAR VIEW TYPES>
+
+L  ::= l₀ | l₁ | l₂ | ...               // addresses
+V  ::= T @ L | 1 | V1  V2 | V1 -o V2 // views
+t_ ::= x_ | l_ | <t_1, t_2>             // proof terms
+    |  let <x_1, x_2> = t_1 in t_2
+    |  λx_. t_ | t_1 (t_2)
+Π  ::= Ø (, a : V)*                     // proof variable context
+T  ::= Bool | Int | ptr(L) | 1
+    |  V ⊃ VT
+    |  T * T
+    |  VT → VT                          // type
+VT ::= Bool | Int | ptr(L) | 1          // viewtype
+    |  V ∧ VT
+    |  V ⊃₀ VT
+    |  V ⊃ VT
+    |  VT * VT
+    |  VT →₀ VT
+    |  VT → VT
+t  ::= x | f | cc(t...) | cf(t...)      // term
+    |  read(t_, t) | write(t_, t1, t2)
+    |  if(t1, t2, t3)
+    |  t_ ∧ t
+    |  let x_ ∧ x = t1 in t2
+    |  λx. t
+    |  app(t1, t2)
+    |  fix f. t
+v  ::= x | cc(v...)                     // value
+    |  t_ ∧ v
+    |  λx_. v
+    |  <v1, v2>
+    |  lam x. d
+Di ::= (x : T)*                         // intuitionistic dynamic variable context
+Dl ::= (x : VT)*                        // linear dynamic variable context
+D  ::= (Di; Dl)                         // dynamic variable context
+mu ::= ([l ↦ T])*                       // state type
+ST ::= ([l ↦ v])*                       // state
+
+"The difference between ⊃₀ and ⊃ is that the former is a viewtype
+but not a type while the latter is a type (and thus a viewtype as well).
+For instance, the following type
+
+  (T1 @ L1) ∧ (T2 @ L2) ∧ (ptr(L1) * ptr(L2)) →
+  (T1 @ L2) ∧ (T2 @ L1) ∧ 1
+
+can be assigned to the function that swaps the contents at L1 and L2.
+This type is essentially equivalent to the following one:
+
+  (T1 @ L1) ⊃
+    (T2 @ L2) ⊃₀
+      ptr(L1) * ptr(L2) →
+        (T1 @ L2) ∧ (T2 @ L1) ∧ 1
+
+where both ⊃₀ and ⊃ are involved."
+(Apparently ⊃₀ and →₀ are not supported in ATS in its current state)
+
+Rules for proving views:
+
+- vw-addr:
+    if the state type contains [l ↦ T], then we can prove l_ : T @ l
+- vw-var:
+    if we have x_ : V in the context, then we can prove x_ : V
+- vw-unit:
+    we can prove <> : 1
+- vw-tup:
+    IF we can use some substate μ₁ and some context Π₁ to prove that t_1 : V1
+   AND we can use some disjoint μ₂ and some context Π₂ to prove that t_2 : V2
+  THEN we can use the combined μ₁ (x) μ₂ and the combined context Π₁, Π₂
+       to prove that <t_1, t_2> : V1 (x) V2
+- vw-let: ...
+- vw-lam:
+    IF, by extending a context Π with an additional proof variable x_ : V,
+        we can obtain a proof t_ : V2,
+   THEN the original context Π proves that (λx_. t_) : (V1 -o V2)
+- vw-app: ...
+
+Figure 5. Rules for assigning viewtypes to dynamic terms
+(an inductive definition of the relation
+  Π; (Δi; Δl) |- [μ] t : VT)
+
+- ty-var:
+    IF the ivar ctx has some binding (x : VT)
+   AND the pvar ctx is empty
+   AND the lvar ctx is empty
+  THEN we can deduce (x : VT) with empty state
+
+- ty-cst:
+   IF we have a constructor (c : (T...) => T)
+  AND we can deduce a series of t_i : T_i using
+      - disjoint sets of pvars
+      - disjoint sets of lvars
+      - disjoint sets of state assumptions (μ)
+      - some common set of ivars
+ THEN we can deduce that (c(t_i...) : T) using
+      - the disjoint union of pvars, lvars, and state assumptions
+      - the common ivars
+
+- ty-if: not surprising.
+
+- ty-vtup (forming a view tuple):
+   IF we can deduce that a view variable (t_ : V) using
+      - pvars Π₁
+      - state assumptions μ₁
+  AND we can deduce a viewtype (t : VT) using
+      - pvars Π₂
+      - state assumptions μ₂
+      - term variables Δ
+ THEN we can deduce the viewtuple (<t_, t> : T∧ VT) using
+      - the combined pvars Π₁, Π₂
+      - the term variables Δ
+      - the combined state assumptions μ₁ (x) μ₂
+
+- ty-unit:
+      we can deduce <> : 1 using
+      - no pvars or lvars
+      - arbitrarily many ivars
+      - no state assumptions
+
+- ty-tup: not surprising.
+
+- ty-let: not surprising.
+
+- ty-vlam0:
+   IF we can deduce a viewtype (v : VT) by extending the pvar ctx with
+      an additional proof variable (x_ : V)
+ THEN we can form the lambda (λx_. v : V ⊃₀ VT)
+
+- ty-vlam:
+   IF we can deduce the viewtype (v : VT) using
+      - no lvars or state assumptions
+      - arbitrarily many ivars
+      - a single proof variable (x_ : V)
+ THEN we can form the lambda (λx_. v : V ⊃ VT)
+
+- ty-vapp: not surprising. The only unusual thing is that it uses the symbol ⊃_?
+  in the premise, which I assume just means that it could be either ⊃₀ or ⊃
+
+- ty-vlet: not surprising.
+
+- ty-fix: not surprising. (Π, Δl and μ are Ø; Δi can contain things)
+
+- ty-read (abridged to account for context plumbing):
+   IF we have t_ : T @ L
+  AND we have t : ptr(L)
+ THEN we can make read(t_, t) : (T @ L) ∧ T
+
+- ty-write (abridged to account for context plumbing):
+   IF we have t_ : T @ L
+  AND we have t₁ : ptr(L)
+  AND we have t₂ : T'
+ THEN we have write(t_, t₁, t₂) : (T' @ L) ∧ T
+
+Proposition 2.1:
+  A term derivable from empty (lvar, ivar, and pvar) contexts
+  necessarily makes no heap assumptions.
+  "If a closed value is assigned a type T, then the value can be
+   constructed without consuming resources and thus is allowed
+   to be duplicated."
+
+"We use a judgement of the form ST |= V to mean that
+ the state ST entails the view V."
+- the state [l ↦ v] (where v is a closed value of type T)
+  entails the view (T @ l).
+- composition rule for applying (x) to combine states and views.
+- if, for ALL ST₀ |= V₁, we have
+              ST₀ (x) ST₁ |= V₂, then
+      we have ST |= V₁ -o V₂.
+
+Lemma 2.2:
+  If we have a chain of heap states combined together
+  where the first one is self contained (|= ST₀ : μ),
+  and the rest entail a particular view V_n,
+  and these views combine together to prove (Π |-(μ) t_ : V),
+  then we can say that the combined state ST |= V.
+
+(The rest of these theorems are very technical and
+ do not seem particularly interesting to me.)
+
+<EXTENDING LAMBDA VIEW WITH QUANTIFIERS>
+
+- "sorts" (higher-level types): addr, bool, int, view, type, viewtype
+- static contexts can include sorts
+- addresses can be variables, locations, or a location + static int
+- static ints can be constructed out of literals or arithmetic ops
+- static propositions can be constructed out of boolean operators
+  or comparison operators (comparing integer
+- views, types, and viewtypes all have the additional ability to be:
+  - variables
+  - existential or universal quantifiers
+  - implications (⊃ ) or disjunctions (∨ )
+- proof terms have some additional distinction between positive and negative
+  universals and implications (⊃ ⁺, ⊃ ⁻, ∀ ⁺, ∀ ⁻)
+
+getPtr: ∀ λ.∀ τ.   (τ @ λ) ∧   ptr(λ)      ⇒  (τ @ λ) ∧  τ
+setPtr: ∀ λ.∀ τ. (top @ λ) ∧  (ptr(λ) * τ) ⇒  (τ @ λ) ∧  1
+alloc:      ∀ ι. (ι ≥ 0) ⊃  (int(ι)⇒ ∃ λ. λ ≠ 0 ∧  (arrayView(1, ι, λ) ∧  ptr(λ)))
+free:   ∀ τ.∀ ι. (ι ≥ 0) ⊃  (arrayView(τ, ι, λ) ∧  int(ι) ⇒  1)
+
+(* arrayMap:
+  ∀ τ₁. ∀ τ₂. ∀ ι. ∀ λ.
+    (ι ≥ 0) ⊃  (arrayView(τ₁, ι, λ)
+                ∧ (ptr(λ) * int(ι) * (τ₁ → τ₂))
+             ⇒  arrayView(τ₂, ι, λ) ∧  ptr(λ))
+*)
+
+// Implementation of this:
+
+fun arrayMap {a1: type, a2: type, n: int, l: addr}
+   (pf: arrayView (a1, n, l) | A: ptr l, n: int n, f: a1 -> a2)
+  : '(arrayView (a2, n, l) | unit) =
+  if n igt then
+    let
+      prval ArraySome (pf1, pf2) = pf
+      val '(pf1 | v) = getPtr (pf1 | A)
+      val '(pf1 | _) = setPtr (pf1 | A, f v)
+      val '(pf2 | _) = arrayMap (pf2 | A + 1, ipred n, f)
+    in
+      '(ArraySome (pf1, pf2) | '())
+    end
+  else
+    let
+      prval ArrayNone () = pf
+    in
+      '(ArrayNone () | '())
+    end
+
+dataview slsegView (type, int, addr, addr) =
+  | {a:type, l:addr} SlsegNone (a, 0, l, l)
+  | {a:type, n:int, first:addr, next:addr, last:addr | n >= 0, first <> null}
+    (* 'first <> null' is added so that nullity test can
+     * be used to check whether a list segment is empty. *)
+    SlsegSome (a, n+1, first, last) of
+      ((a, ptr next) @ first, slsegView (a, n, next, last))
+
+viewdef sllistView (a:type, n:int, l:addr) = slsegView (a, n, 1, null)
+
+// in-place singly linked list reversal
+fn reverse {a:type, n:int, l:addr | n >= 0}
+   (pf: sllistView(a, n, l) | p: ptr l)
+  = [l: addr] '(sllistView (a, n, l) | ptr l) =
+  let
+    fun rev {n1:int, n2:int, l1:addr, l2:addr | n1 >= 0, n2 >= 0}
+       (pf1: sllistView (a,n1,l1), pf2: slListView (a,n2,l2)  |
+        p1: ptr l1, p2: ptr l2)
+      : [l:addr] '(sllistView (a, n1+n2, l) | ptr l) =
+      if isNull p2 then
+        let prval SlsegNone () = pf2
+        in '(pf1 | p2) end
+      else
+        let
+          prval SlsegSome (pf21, pf22) = pf2
+          prval '(pf210, pf211) = pf21
+          val '(pf211 | next) = getPtr (pf211 | p2 + 1)
+          val '(pf211 | _) = setPtr (pf211 | p2 + 1, p1)
+          prval pf1 = SlsegSome ('(pf210, pf211), pf1)
+        in
+          rev (pf1, pf22 | p2, next)
+        end
+  in
+    rev (SlsegNone (), pf | null, p)
+  end
+
+<HANDLING PERSISTENT STATEFUL VIEWS>
+
+(* references can be regarded as a special form of pointers
+ * such that we have no obligation to provide proofs (or views)
+ * when reading from or writing to them...
+ * it is incorrect to assume that a persistent view !V implies
+ * the ephemeral view V. essentially ! acts as a form of modality
+ *)
+typedef ref (a: type) = [l: addr] '(!(a @ l) | ptr(l))
+
+(* The notation (V1 | V2 | VT1) -> VT2 means (V1, V2 | VT1) -> '(V1 | VT2);
+ * in other words, V1 is preserved while V2 is consumed.
+ * Any operator of this form (which preserves the view invariant) can also
+ * be used as a view operator. *)
+fun getPtr0 {a:type, l:addr} (pf: a @ l | (* none *) | p: ptr l      ): a    = getPtr (pf | p)
+fun setPtr0 {a:type, l:addr} (pf: a @ l | (* none *) | p: ptr l, x: a): unit = setPtr (pf | p, x)
+fun getRef {a:type} (r: ref a     ): a    = let val '(pf | p) = r in getPtr0 (pf | (* none *) | p   ) end
+fun setRef {a:type} (r: ref a, x a): unit = let val '(pf | p) = r in setPtr0 (pf | (* none *) | p, x) end
+
+<IMPLEMENTATIONS OF PRODUCT AND SUM TYPES
+ IN TERMS OF PERSISTENT VIEWS>
+
+(* viewbox is a primitive that turns an ephemeral stateful view V
+ * into a persistent stateful view !V -- can this be implemented
+ * as a function? *)
+
+typedef pair (a1: type, a2: type) =
+  [l: addr] '(!(a1 @ l), !(a2 @ l+1) | ptr(l))
+
+fun makePair {a1:type, a2:type} (x1: a1, x2: a2): pair (a1, a2) =
+  let
+    val '(pf1 | p) = alloc(2)
+    prval ArraySome (pf1, ArraySome (pf2, ArrayNone ())) = pf
+    val '(pf1 | _) = setPtr (pf1 | p, x1)
+    val '(pf2 | _) = setPtr (pf2 | p+1, x2)
+  in
+    '(viewbox pf1, viewbox pf2 | p)
+  end
+
+fun getFst {a1:type, a2:type} (p: pair (a1, a2)): a1 =
+  let val '(pf1, _ | p0) = p in getPtr0 (pf1 | (*none*) | p0) end
+
+fun getSnd {a1:type, a2:type} (p: pair (a1, a2)): a2 =
+  let val '(_, pf2 | p0) = p in getPtr0 (pf1 | (*none*) | p0 + 1) end
+
+typedef sum (a1: type, a2: type) =
+  [l: addr, i: int | i == 0 || i == 1]
+    '(!(int (i) @ l),
+      {i == 0} !(a1 @ (l+1)),
+      {i == 1} !(a2 @ (l+1))
+     | ptr l)
+
+fun inl {a1: type, a2: type} (x: a1): sum (a1, a2) =
+  let
+    val (pf | p) = alloc (2)
+    prval ArraySome (pf1, ArraySome (pf2, ArrayNone ())) = pf
+    val '(pf1 | _) = setPtr (pf1 | p, 0)
+    val '(pf2 | _) = setPtr (pf2 | p+1, x)
+  in
+    '(viewbox pf1, viewbox pf2, '() | p)
+  end
+
+fun inl {a1: type, a2: type} (x: a2): sum (a1, a2) =
+  let
+    val (pf | p) = alloc (2)
+    prval ArraySome (pf1, ArraySome (pf2, ArrayNone ())) = pf
+    val '(pf1 | _) = setPtr (pf1 | p, 1)
+    val '(pf2 | _) = setPtr (pf2 | p+1, x)
+  in
+    '(viewbox pf1, '(), viewbox pf2 | p)
+  end
+
+// ==================================================
+// snippets from Deech's Strange Loop ATS talk (2017)
+// ==================================================
+
+fun bar ... =
+   let
+      val (awesome_proof | fd) = open_file("some_file.txt")
+      val contents = read_file (awesome_proof | fd)
+      ...
+   in ... end
+
+fun foo
+    {n : int | n > 0 && n < 10}
+    (i : int n) ...
+
+// FFI with C, not specific
+%{
+  #include <stdio.h>
+  #include <stdlib.h>
+  void swap(void *i, void *j, size_t size) { ... }
+%}
+extern fun swap (i:ptr, j:ptr, s:size_t): void = "ext#swap"
+extern fun malloc(s:size_t):ptr = "ext#malloc"
+
+implement main0 () =
+  let
+     val i = malloc(sizeof<int>)
+     val j = malloc(sizeof<double>)
+     val _ = swap(i,j,sizeof<double>) // oh noes!
+  in
+     () // free as in leak
+  end
+
+// more specific FFI types
+extern fun swap
+  {a : t@ype}
+  {l1: addr | l1 > null}
+  {l2: addr | l2 > null}
+  (a @ l1, a @ l2 | i : ptr l1, j : ptr l2, s: sizeof_t a):
+    (a @ l1, a @ l2 | void) = "ext#swap"
+extern fun malloc
+       {a:t@ype}
+       (s:sizeof_t a):
+       [l:addr | l > null] (a? @ l | ptr l)
+    = "ext#malloc"
+
+implement main0 () = let
+  val (pfi | i) = malloc (sizeof<int>)
+  val (pfj | j) = malloc (sizeof<int>)
+  val (pfi1 | ()) = ptr_set(pfi | i, 1)
+  val (pfi2 | ()) = ptr_set(pfj | j, 2)
+  val (pfi2,pfj2| ()) = swap(pfi1, pfj1 | i, j, sizeof<int>)
+in
+  free(pfi2 | i);
+  free(pfj2 | j);
+end
+
+// idiomatic swap
+fun {...}
+    swap
+    {...}
+    (...) : void =
+  let
+    val tmp = !p1
+  in
+    !p1 := !p2;
+    !p2 := tmp
+  end
+
+// recursion!
+fun factorial
+    { n : int | n >= 1 }
+    (i : int n) : double =
+  let
+    fun loop
+        { n : int | n >= 1 }
+        .<n>. // "termination metric"
+        (acc : double, i : int (n)) : double =
+      case- i of
+      | 1 => acc
+      | i when i > 1 => loop(acc * i, i - 1)
+  in
+    loop(1.0, i)
+  end
+
+// viewtypes: connect linear resources to ADTs
+
+sortdef agz = {l:addr | l > null}
+viewtypedef safe_ptr(a:t@ype) = [l:agz] (a @ l | ptr l)
+
+// new 'swap' type signature:
+extern fun swap
+  {a:t@ype}
+  ( i : safe_ptr a ): ...
+
+dataviewtype list_vt =
+  (a:viewt@ype, int) =
+  | list_vt_nil(a, 0) of ()
+  | {n: int | n > 0}
+    list_vt_cons(a, n) of (a, list_vt(a, n-1))
+
+list_vt_cons(1, list_vt_cons(2, list_vt_nil())) : list_vt(int, 2)
+
+// factorial that preserves intermediate results in a list
+fun factorial
+       {n:int | n >= 2}
+       (i:int n): list_vt(double, n-1) =
+  let
+     var res: ptr
+     fun loop
+         {n1:int | n1 >= 0 && n1 <= n-2}
+         .<n1>.
+         (
+           seed: double,
+           next: int n1,
+           // meaning:
+           // a reference to an uninitialized pointer
+           // which is TRANSFORMED into
+           // a viewtype which proves the existence of
+           // a list of doubles of length n1+1
+           res: &ptr? >> list_vt(double, n1+1)
+         ): void =
+            case- next of
+              | 0 => res := list_vt_cons(seed, list_vt_nil())
+              | next when next > 0 =>
+                let
+                  val () = res := list_vt_cons{..}{n1+1}(seed, _)
+                  val+list_vt_cons(_, hole) = res
+                  val curr = seed * g0i2f(next)
+                  val () = loop(curr, next-1, hole)
+                in () end
+     val initial = g0i2f(i) * g0i2f(i-1)
+     val () = loop(initial,i-2,res)
+  in
+    res
+  end
+
+// =============================================
+// snippets from Deech's Compose ATS talk (2019)
+// =============================================
+
+implement main0(argc, argv) =
+  let
+    val a = fopen("test.txt", "r")
+    val b = fopen("test.txt", "r")
+    // a stack allocated closure!
+    var f = lam@(s:string):void => println! s
+  in (
+    fwithline(a,f);
+    fclose(a);
+    fclose(b)
+  ) end
+
+// abstract linear type
+datavtype FileHandle = FileHandle of ()
+
+fun fopen(path:string, mode:string): FileHandle =
+  let
+    // a ptr0 and a FileHandle have the same representation?
+    extern castfn toFileHandle(p:ptr0):<> FileHandle
+  in
+    toFileHandle($extfcall(ptr0,"fopen",path,mode))
+  end
+
+fun fclose(f:FileHandle):void =
+  let
+    extern castfn fromFH(f:FileHandle):<> ptr0
+  in
+    $extfcall(void,"fclose",fromFH(f))
+  end
+
+fun fwithline(
+    fh: !FileHandle,
+    f: &(string) -<clo1> void
+    ):void =
+  let
+    var len = i2sz(0)
+    val lenP = addr@len
+    var buffer = the_null_ptr
+    val buffer = addr@buffer
+    extern castfn toPtr{l:addr}(f: !FIleHandle):<> ptr0
+    val _ = $extfcall(int,"getline",bufferP,lenP,toPtr(fh))
+  in
+    f($UN.castvwtp0{string}(buffer))
+  end
+
+// "building a linear tracked array from scratch"
+
+datavtype arr(a:vtflt,addr,int) =
+  | {l:addr}
+    arr_nil(a,l,0) of ()
+  | {l:add}{n:nat}
+    arr_cons(a,l,n+1) of (a,arr(a,l+sizeof(a),n))
+
+// split the array! prove it! statically split the array
+
+val a = arr_cons(string0_copy_vt("a"),
+         arr_cons(string0_copy_vt("b"),
+          ...))
+
+prval (a1, a2) = array_split(a,1)
+print_array(a1)
+print_array(a2)
+
+// proof level functions!
+
+prfn arr_split // prfn = proof function, prfun = recursive
+  {a:vtflt} // viewtype flat?
+  {l:addr} //
+  {n:int}{i:nat | i <= n}
+  (pfarr: arr(a,l,n), i:size(n)):
+    @(arr(a,l,i), arr(a,l+i*sizeof(a),n-i)) =
+  split (pfarr) where {
+    prfun split
+      ...
+      sif i > 0 then
+        let
+          prval (pfx, pfxs) = uncons(pfarr)
+          prval (pfleft, pfright) = split{..}{n-1,i-1}(pfxs)
+        in
+          (arr_cons(pfx, pfleft), pfright)
+        end
+      else
+        let
+          prval EQINT () = eqint_make{i,0}()
+        in
+          (arr_nil{a}{l}(), pfarr)
+        end
+  }
+
+// praxi = proof axiom
+extern praxi uncons
+  (arr(a,l,n)):(a,arr(a,l+sizeof(a),n-1))
+
+// dataprop: proof-level sum type?
+dataprop EQINT(int,int) = {x:int} EQINT(x,x)
+extern prfun eqint_make{x,y:int | x == y}(): EQINT(x,y)
+
+// streams: one of the few things with "runtime optimization magic"
+
+datavtype stream_vt_con (a:vtflt) =
+  | stream_vt_nil of ()
+  | stream_vt_cons of (a, stream_vt(a))
+where
+stream_vt (a:vtflt) = lazy_vt(stream_vt_con(a))
+
+$ldelay(
+  some suspended computation,
+  optionally free linear resources
+)
+
+fun number_stream(start:int): stream_vt(int) =
+  loop(start) where {
+    fun loop(curr:int):stream_vt(int) =
+      $ldelay(stream_vt_cons(curr,loop(curr+1)))
+  }
+
+// example: generating *all* pythagorean triples, same as C
+
+fun triples () : stream_vt(@(int,int,int)) =
+  f1(1) where {
+    vtypedef res = stream_vt(@(int,int,int))
+    fun f1(z: int): res = f2(1, z)
+    and f2(x: int, z: int): res =
+          if x <= z then f3(x,x,z) else f1(z+1)
+    and f3(x:int, y:int, z:int): res =
+          $ldelay(
+            if y <= z then
+              (stream_vt_cons((x,y,z), f3(x,y+1,z)))
+            else !(f2(x+1,z))
+  }
+
+// filter the triples
+stream_vt_filter_fun
+  ( triples(),
+    lam(ts) =>
+       let
+         val (x, y, z) = ts
+       in
+         x*x + y*y = z*z
+       end
+  )
+
+// =================================================
+// snippets from Deech's Berlin FP Group talk (2021)
+// =================================================
+
+datavtype Option_vt (a:vt@ype, bool) =
+  | Some_vt(a, true) of (a)
+  | None_vt(a, false)
+
+absvtype arrayptr (a:vt@ype, l:addr, n:int) = ptr(l)
+vtypedef arrayptr (a:vt@ype, n:int) =
+  [l:addr] arrayptr(a,l,n) // existential type: "exists some address"
+
+implement main0 () = let
+  val (pf | i) = malloc (sizeof<int>)
+  val (pfset | ()) = ptr_set(pf | i, 10)
+  val (pfFile | fp) = fopen("test.txt", "r")
+in
+  free(pfset | i);
+  fclose(pfFile | fp);
+end
+
+// reading user input example
+
+fun {a:t@ype} read_input():Option_vt(a) =
+  let
+    var result: a?
+    // changes the type of `result`
+    val success = fileref_load<a> (stdin_ref, result)
+    // type of fileref_load:
+    // (FILEref, &a? >> opt(a, b)) -<fun1> #[b:bool] bool(b)
+    // -- returns a boolean such that opt is some if `b` is true
+  in
+  if success then
+    // what does this even do?
+    let prval () = opt_unsome(result)
+    in Some_vt(result) end
+  else
+    let prval () = opt_unnone(result)
+    in None_vt end
+
+// transforms an opt(a,true) into an a
+praxi opt_unsome{a:vt@ype}(x: opt(a, true) >> a):<prf> void
+
+fun make_array
+  {n:int | n >= 1; n <= 10}
+  (len:int n): [l:addr] arrayptr(int,l,n) = ...
+
+implement main0() = begin
+    println! ("Length of array? (1-10):");
+    case+ read_input<int>() of
+    | ~None_vt() => println! ("Not a number!")
+    | ~Some_vt(len) =>
+        if (len >= 1) * (len <= 10) then
+          // "runtime checks discharge proofs at compile time"
+          make_array(len)
+        else println! ("Bad number!")
+
+// proof-level function example
+
+prfun split
+  {a: t@ype} {l:addr} {n,i:nat | i <= n}
+  (pfarr: array_v (a,l,n)):
+  ( array_v (a,l,i)
+    array_v (a,l+i*sizeof(a), n-i) ) =
+  sif i > 0 then let
+    prval (pf1, pf2arr) = array_v_uncons pfarr
+    prval (pf1res1, pf1res2) =
+      split{..}{n-1,i-1} (pf2arr)
+  in
+    (array_v_cons (pf1, pf1res1), pf1res2)
+  end else let
+    prval EQINT () = eqint_make{i,0}((*void*))
+  in
+    (array_v_nil (), pfarr)
+  end
+
+praxi array_v_uncons :
+{a:vt0p}{l:addr}{n:int | n > 0}
+array_v (a,l,n) -<prf> (a @ l, array_v (a, l+sizeof(a), n-1))
+
+// ===========================
+(* Solving the Queen Puzzle *)
+// ===========================
+#define N 8 // it can be changed
+#define NSOL 10 // it can be changed 
+val () =
+  (((fix qsolve(n: int): stream(list0(int)) =>
+         if (n > 0) then
+           ((qsolve(n-1) * list0_make_intrange(0,N))
+              .map(TYPE{list0(int)})(
+                  lam($tup(xs,x)) => cons0(x,xs))
+           )
+              .filter()
+                  (lam(xs) =>
+                    let val-cons0(x0,xs) = xs in
+                      xs.iforall()(
+                          lam(i, x) => ((x0)!=x) && (abs(x0-x)!=i+1))
+                    end
+                  )
+         else
+           (stream_make_sing(nil0()))
+    )(N))
+  .takeLte(NSOL))
+  .iforeach()(lam(i, xs)=>
+    (println!("Solution#", i+1, ":");
+    xs.rforeach()(lam(x) => ((N).foreach()(lam(i)=>
+      (print_string(ifval(i=x," Q", " ."))));
+      println!()));
+    println!()))
