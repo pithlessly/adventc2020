@@ -55,3 +55,10 @@ toBuiltinEqual a x y eq = eq (\t => x = t) Refl
 
 fromBuiltinEqual : (a : Type) -> (x, y : a) -> (x = y) -> Equal a x y
 fromBuiltinEqual a x x Refl = refl a x
+
+-- Implementation of heterogenous equality
+
+HEqual : (a : Type) -> (b : Type) -> a -> b -> Type
+HEqual a b x y =
+  (same_type : Equal Type a b **
+   Equal b y (same_type id x))
