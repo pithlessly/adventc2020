@@ -39,9 +39,9 @@ NatRecSpec rec =
 
 rec_from_iter : NatIter -> NatRec
 rec_from_iter iter a z s n =
-  snd (iter (Nat, a) (Z, z) (\p => step p) n) where
+  snd (iter (Nat, a) (Z, z) step n) where
     step : (Nat, a) -> (Nat, a)
-    step p = (S (fst p), s (fst p) (snd p))
+    step = \p => (S (fst p), s (fst p) (snd p))
 
 spec_compliant : (iter : NatIter) ->
                  NatIterSpec iter ->
