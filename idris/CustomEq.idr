@@ -24,7 +24,7 @@ cong : (a, b : Type) -> (f : a -> b) -> (x, y : a) ->
        Equal a x y -> Equal b (f x) (f y)
 cong a b f x y eq = \p => eq (p . f)
 
--- Properties of equality that are independent of intuitionistic type theory
+-- Properties of equality that are independent of intensional type theory
 
 AxiomK, UIPVariant, UIP : Type
 
