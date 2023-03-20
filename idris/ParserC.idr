@@ -24,10 +24,11 @@ parameters {auto _ : Monad Parser}
   char_lit : Parser Char
   char_lit =
 
-      seq {m=Parser} (char '"' -: char '\\' -: any -: char '"' -:
-      fin             (\_, _, c, _ => c))
+    seq {m=Parser} (char '"' -: char '\\' -: any -: char '"' -:
+    fin             (\_, _, c, _ => c))
 
-    <|>
+      <|>
 
-      seq {m=Parser} (char '"' -:              any -: char '"' -:
-      fin             (\_,    c, _ => c))
+    seq {m=Parser} (char '"' -:              any -: char '"' -:
+    fin             (\_,    c, _ => c))
+
