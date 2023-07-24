@@ -87,6 +87,16 @@ data WD : (f : DPF) -> f.Ctx -> Type where
            (children : (i : f.Deg ctx tag) -> WD f (f.child_ctx ctx tag i)) ->
            WD f ctx
 
+wd_induction : (f : DPF) ->
+               (0 c : (ctx : f.Ctx) -> WD f ctx -> Type) ->
+               (induct : (ctx : f.Ctx) -> (tag : f.Tag ctx) ->
+                         (children : (i : f.Deg ctx tag) -> WD f (f.child_ctx ctx tag i)) ->
+                         (results : (i : f.Deg ctx tag) -> c (f.child_ctx ctx tag i) (children i)) ->
+                         c ctx (MakeWD tag children)) ->
+               (ctx : f.Ctx) -> (w : WD f ctx) -> c ctx w
+wd_induction f c induct ctx (MakeWD tag children) =
+  induct ctx tag children (\i => wd_induction f c induct (f.child_ctx ctx tag i) (children i))
+
 -- ============================================================= --
 -- It might seem that W is insufficient to represent inductive   --
 -- families. But here we demonstrate an alternative construction --
@@ -121,6 +131,27 @@ parameters (f : DPF)
               WD' ctx
     makeWD' tag children =
       (MakeW (ctx ** tag) (\i => (children i).fst) ** (Refl, \i => (children i).snd))
+
+  -- It may be possible to get rid of this 'partial' annotation;
+  -- as is, we can't convince the termination checker that
+  --
+  --   children' = \i => (children i ** children_valid i)
+  --
+  -- is a smaller term than
+  --
+  --   w         = MakeW (ctx ** tag) children ** (Refl, children_valid)
+  partial
+  wd'_induction : (0 c : (ctx : f.Ctx) -> WD' ctx -> Type) ->
+                  (induct : (ctx : f.Ctx) -> (tag : f.Tag ctx) ->
+                            (children : (i : f.Deg ctx tag) -> WD' (f.child_ctx ctx tag i)) ->
+                            (results : (i : f.Deg ctx tag) -> c (f.child_ctx ctx tag i) (children i)) ->
+                            c ctx (makeWD' ctx tag children)) ->
+                  (ctx : f.Ctx) -> (w : WD' ctx) -> c ctx w
+  wd'_induction c induct ctx ((MakeW (ctx ** tag) children) ** (Refl, children_valid)) =
+    let children' : (i : f.Deg ctx tag) -> WD' (f.child_ctx ctx tag i)
+        children' i = (children i ** children_valid i)
+    in
+    induct ctx tag children' (\i => wd'_induction c induct (f.child_ctx ctx tag i) (children' i))
 
 -- =========================================================== --
 -- Implementation of a common inductive family in terms of WD. --
