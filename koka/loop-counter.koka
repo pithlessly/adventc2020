@@ -1,0 +1,14 @@
+effect fun idx() : int
+
+fun count-from-zero(action)
+  var counter := 0
+  with fun idx()
+    counter := counter + 1
+    counter - 1
+  action()
+
+fun main()
+  with count-from-zero()
+  ['a', 'b', 'c'].foreach fn(c : char)
+    val i = idx()
+    println( i.show ++ " " ++ c.string )
